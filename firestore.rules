@@ -1,0 +1,81 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function isValidTopicStatus(status) {
+      return status in [
+        'Not Started',
+        'In Progress',
+        'Practiced',
+        'Completed',
+        'Needs Revision'
+      ];
+    }
+
+    // Server-only collections managed exclusively via Firebase Admin SDK
+    match /_system/{docId} {
+      allow read, write: if false;
+    }
+
+    match /_authSessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    match /_rateLimits/{limitKey} {
+      allow read, write: if false;
+    }
+
+    // User-scoped private learning data
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      match /topics/{topicId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.title is string
+          && request.resource.data.title.size() >= 2
+          && isValidTopicStatus(request.resource.data.status);
+        allow delete: if isOwner(userId);
+      }
+
+      match /studySessions/{sessionId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.durationMinutes is int
+          && request.resource.data.durationMinutes >= 1
+          && request.resource.data.durationMinutes <= 1440
+          && request.resource.data.dateKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+        allow delete: if isOwner(userId);
+      }
+
+      match /completionEvents/{eventId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidTopicStatus(request.resource.data.newStatus);
+        allow update, delete: if isOwner(userId);
+      }
+
+      match /goals/{goalId} {
+        allow read, write: if isOwner(userId)
+          && (!('targetMinutes' in request.resource.data) || request.resource.data.targetMinutes >= 0);
+      }
+
+      match /reflections/{reflectionId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /settings/{settingsId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // Default deny for all other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
